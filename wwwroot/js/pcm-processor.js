@@ -1,23 +1,21 @@
 "use strict";
 
 /**
- * AudioWorkletProcessor that captures PCM audio from the microphone,
- * converts float32 samples to int16, buffers them, and sends chunks
- * to the main thread when silence is detected after speech.
+ * AudioWorkletProcessor that captures PCM audio and sends small 200ms chunks
+ * continuously. No silence detection needed because the Azure Speech SDK handles
+ * speech boundary detection internally via continuous recognition.
  */
 class PcmProcessor extends AudioWorkletProcessor {
     constructor() {
         super();
         this._buffer = [];
-        this._silenceCount = 0;
-        this._silenceThreshold = 0.01;
-        this._minBufferSize = 32000;  // ~2 seconds at 16kHz (in bytes)
-        this._maxBufferSize = 160000; // ~10 seconds safety cap
+        this._chunkSize = 6400; // 200ms at 16kHz, 16-bit, mono = 6400 bytes
         this._active = true;
 
         this.port.onmessage = (event) => {
             if (event.data === "stop") {
                 this._active = false;
+                this._flush();
             }
         };
     }
@@ -30,36 +28,17 @@ class PcmProcessor extends AudioWorkletProcessor {
 
         const channelData = input[0];
 
-        // Check for silence
-        let sum = 0;
-        for (let i = 0; i < channelData.length; i++) {
-            sum += Math.abs(channelData[i]);
-        }
-        const average = sum / channelData.length;
-
-        if (average < this._silenceThreshold) {
-            this._silenceCount++;
-        } else {
-            this._silenceCount = 0;
-        }
-
-        // Convert float32 to int16 PCM bytes
+        // Convert float32 samples to int16 PCM bytes (little-endian)
         for (let i = 0; i < channelData.length; i++) {
             let s = Math.max(-1, Math.min(1, channelData[i]));
             s = s < 0 ? s * 0x8000 : s * 0x7FFF;
-            const lo = s & 0xFF;
-            const hi = (s >> 8) & 0xFF;
-            this._buffer.push(lo, hi);
+            this._buffer.push(s & 0xFF, (s >> 8) & 0xFF);
         }
 
-        // Send when silence detected after enough speech
-        if (this._buffer.length >= this._minBufferSize && this._silenceCount >= 3) {
-            this._flush();
-        }
-
-        // Safety: prevent unbounded growth
-        if (this._buffer.length > this._maxBufferSize) {
-            this._flush();
+        // Emit a chunk every 200ms worth of audio
+        while (this._buffer.length >= this._chunkSize) {
+            const chunk = new Uint8Array(this._buffer.splice(0, this._chunkSize));
+            this.port.postMessage(chunk.buffer, [chunk.buffer]);
         }
 
         return true;
@@ -69,7 +48,6 @@ class PcmProcessor extends AudioWorkletProcessor {
         if (this._buffer.length === 0) return;
         const chunk = new Uint8Array(this._buffer);
         this._buffer = [];
-        this._silenceCount = 0;
         this.port.postMessage(chunk.buffer, [chunk.buffer]);
     }
 }

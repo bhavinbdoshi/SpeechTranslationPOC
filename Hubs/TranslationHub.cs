@@ -1,21 +1,26 @@
+using System.Collections.Concurrent;
 using Microsoft.AspNetCore.SignalR;
 using SpeechTranslationPOC.Models;
 using SpeechTranslationPOC.Services;
-using System.Collections.Concurrent;
 
 namespace SpeechTranslationPOC.Hubs;
 
 public class TranslationHub : Hub
 {
     private static readonly ConcurrentDictionary<string, ConcurrentDictionary<string, SessionUser>> Sessions = new();
+    private static readonly ConcurrentDictionary<string, TranslationSession> TranslationSessions = new();
+
     private readonly SpeechTranslationService _translationService;
+    private readonly IHubContext<TranslationHub> _hubContext;
     private readonly ILogger<TranslationHub> _logger;
 
     public TranslationHub(
         SpeechTranslationService translationService,
+        IHubContext<TranslationHub> hubContext,
         ILogger<TranslationHub> logger)
     {
         _translationService = translationService;
+        _hubContext = hubContext;
         _logger = logger;
     }
 
@@ -54,31 +59,150 @@ public class TranslationHub : Hub
 
         _logger.LogInformation("{User} joined session {Session} (speak={Speak}, listen={Listen})",
             displayName, sessionId, speakLanguage, listenLanguage);
+
+        // Auto-start translation when both users are present
+        if (session.Count == 2)
+        {
+            await StartTranslationForSession(sessionId, session);
+        }
+    }
+
+    /// <summary>
+    /// Creates translation sessions for both speakers in the session.
+    /// Called automatically when the second user joins.
+    /// </summary>
+    private async Task StartTranslationForSession(
+        string sessionId,
+        ConcurrentDictionary<string, SessionUser> session)
+    {
+        var users = session.Values.ToList();
+        if (users.Count != 2) return;
+
+        var userA = users[0];
+        var userB = users[1];
+
+        // A speaks -> B listens
+        await CreateTranslationLink(sessionId, userA, userB);
+
+        // B speaks -> A listens
+        await CreateTranslationLink(sessionId, userB, userA);
+
+        _logger.LogInformation("Auto-started translation for session {Session}", sessionId);
+    }
+
+    private async Task CreateTranslationLink(string sessionId, SessionUser speaker, SessionUser listener)
+    {
+        if (listener.ListenOriginal) return;
+
+        var sessionKey = GetSessionKey(sessionId, speaker.ConnectionId);
+
+        // Clean up any existing session
+        if (TranslationSessions.TryRemove(sessionKey, out var old))
+        {
+            await old.DisposeAsync();
+        }
+
+        try
+        {
+            var translationSession = await _translationService.CreateSessionAsync(
+                speaker.SpeakLanguage, listener.ListenLanguage, synthesize: true);
+
+            // Use IHubContext (singleton) because Hub.Clients is disposed after method returns
+            var hubContext = _hubContext;
+            var speakerName = speaker.DisplayName;
+            var listenerConnId = listener.ConnectionId;
+
+            // Text arrives immediately when recognition completes
+            translationSession.OnPartialResult += async (recognizedText, partialTranslation) =>
+            {
+                await hubContext.Clients.Client(listenerConnId)
+                    .SendAsync("ReceivePartial", speakerName, recognizedText, partialTranslation);
+            };
+
+            // Final text (no audio bundled -- audio comes separately)
+            translationSession.OnTranslationTextReceived += async (result) =>
+            {
+                await hubContext.Clients.Client(listenerConnId)
+                    .SendAsync("ReceiveText", speakerName, result.RecognizedText, result.TranslatedText);
+            };
+
+            // Audio arrives independently (usually shortly after text)
+            translationSession.OnSynthesisAudioReceived += async (audioBytes) =>
+            {
+                var audioBase64 = Convert.ToBase64String(audioBytes);
+                await hubContext.Clients.Client(listenerConnId)
+                    .SendAsync("ReceiveAudio", audioBase64, speakerName);
+            };
+
+            TranslationSessions[sessionKey] = translationSession;
+
+            _logger.LogInformation(
+                "Translation link created: {Speaker} ({SpeakLang}) -> {Listener} ({ListenLang})",
+                speakerName, speaker.SpeakLanguage, listener.DisplayName, listener.ListenLanguage);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to create translation link {Speaker} -> {Listener}",
+                speaker.DisplayName, listener.DisplayName);
+        }
     }
 
     public async Task SetListenMode(string sessionId, bool listenOriginal)
     {
-        if (Sessions.TryGetValue(sessionId, out var session) &&
-            session.TryGetValue(Context.ConnectionId, out var user))
+        if (!Sessions.TryGetValue(sessionId, out var session))
+            return;
+        if (!session.TryGetValue(Context.ConnectionId, out var user))
+            return;
+
+        user.ListenOriginal = listenOriginal;
+        await Clients.Caller.SendAsync("ListenModeChanged", listenOriginal);
+
+        // Find the speaker whose translation targets this listener
+        var speaker = session.Values.FirstOrDefault(u => u.ConnectionId != Context.ConnectionId);
+        if (speaker == null) return;
+
+        var sessionKey = GetSessionKey(sessionId, speaker.ConnectionId);
+
+        if (listenOriginal)
         {
-            user.ListenOriginal = listenOriginal;
-            await Clients.Caller.SendAsync("ListenModeChanged", listenOriginal);
+            // Stop translation -- listener wants raw audio only
+            if (TranslationSessions.TryRemove(sessionKey, out var ts))
+            {
+                await ts.DisposeAsync();
+                _logger.LogInformation("Translation stopped: {Listener} switched to original voice.",
+                    user.DisplayName);
+            }
+        }
+        else
+        {
+            // Restart translation -- listener wants translated audio again
+            await CreateTranslationLink(sessionId, speaker, user);
+            _logger.LogInformation("Translation restarted: {Listener} switched back to translated voice.",
+                user.DisplayName);
         }
     }
 
     public async Task SetListenLanguage(string sessionId, string listenLanguage)
     {
-        if (Sessions.TryGetValue(sessionId, out var session) &&
-            session.TryGetValue(Context.ConnectionId, out var user))
+        if (!Sessions.TryGetValue(sessionId, out var session))
+            return;
+        if (!session.TryGetValue(Context.ConnectionId, out var user))
+            return;
+
+        user.ListenLanguage = listenLanguage;
+        await Clients.Caller.SendAsync("ListenLanguageChanged", listenLanguage);
+
+        // Recreate translation link with new language
+        var speaker = session.Values.FirstOrDefault(u => u.ConnectionId != Context.ConnectionId);
+        if (speaker != null && !user.ListenOriginal)
         {
-            user.ListenLanguage = listenLanguage;
-            await Clients.Caller.SendAsync("ListenLanguageChanged", listenLanguage);
+            await CreateTranslationLink(sessionId, speaker, user);
         }
     }
 
     /// <summary>
-    /// Receives a base64-encoded PCM audio chunk from the speaker, decodes it,
-    /// translates it for each listener, and sends back the result as base64.
+    /// Receives PCM audio chunks and pushes them into the continuous recognizer.
+    /// Translation sessions are auto-created when both users join.
     /// </summary>
     public async Task SendAudio(string sessionId, string pcmAudioBase64)
     {
@@ -97,67 +221,69 @@ public class TranslationHub : Hub
             }
             catch (FormatException)
             {
-                _logger.LogWarning("SendAudio: Invalid base64 from {Speaker}.", Context.ConnectionId);
                 return;
             }
 
             if (pcmAudio.Length == 0)
                 return;
 
-            _logger.LogDebug("SendAudio: Received {Bytes} bytes from {Speaker} in session {Session}.",
-                pcmAudio.Length, speaker.DisplayName, sessionId);
-
-            var listeners = session.Values
-                .Where(u => u.ConnectionId != Context.ConnectionId)
+            // Forward raw audio to listeners who want original voice
+            var originalListeners = session.Values
+                .Where(u => u.ConnectionId != Context.ConnectionId && u.ListenOriginal)
                 .ToList();
 
-            foreach (var listener in listeners)
+            foreach (var listener in originalListeners)
             {
-                if (listener.ListenOriginal)
-                {
-                    // Send the original PCM audio as base64
-                    await Clients.Client(listener.ConnectionId)
-                        .SendAsync("ReceiveAudio", pcmAudioBase64, speaker.DisplayName,
-                            string.Empty, string.Empty, true);
-                }
-                else
-                {
-                    try
-                    {
-                        var result = await _translationService.TranslateAudioAsync(
-                            pcmAudio, speaker.SpeakLanguage, listener.ListenLanguage, synthesize: true);
+                await Clients.Client(listener.ConnectionId)
+                    .SendAsync("ReceiveOriginalAudio", pcmAudioBase64, speaker.DisplayName);
+            }
 
-                        if (result.Success)
-                        {
-                            var audioBase64 = result.SynthesizedAudio != null
-                                ? Convert.ToBase64String(result.SynthesizedAudio)
-                                : string.Empty;
-
-                            await Clients.Client(listener.ConnectionId)
-                                .SendAsync("ReceiveAudio",
-                                    audioBase64,
-                                    speaker.DisplayName,
-                                    result.RecognizedText,
-                                    result.TranslatedText,
-                                    false);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Translation failed for {Speaker} -> {Listener}",
-                            speaker.DisplayName, listener.DisplayName);
-                    }
-                }
+            // Push audio into the continuous recognizer
+            var sessionKey = GetSessionKey(sessionId, Context.ConnectionId);
+            if (TranslationSessions.TryGetValue(sessionKey, out var translationSession))
+            {
+                translationSession.WriteAudio(pcmAudio);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "SendAudio failed for connection {ConnectionId}", Context.ConnectionId);
+            _logger.LogError(ex, "SendAudio failed for {ConnectionId}.", Context.ConnectionId);
         }
     }
 
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
+        // Clean up translation sessions where this user is the speaker
+        var speakerKeys = TranslationSessions.Keys
+            .Where(k => k.EndsWith("_" + Context.ConnectionId))
+            .ToList();
+
+        foreach (var key in speakerKeys)
+        {
+            if (TranslationSessions.TryRemove(key, out var ts))
+            {
+                await ts.DisposeAsync();
+            }
+        }
+
+        // Clean up translation sessions where this user is the listener
+        foreach (var (sessionId, session) in Sessions)
+        {
+            if (session.ContainsKey(Context.ConnectionId))
+            {
+                var otherUser = session.Values.FirstOrDefault(u => u.ConnectionId != Context.ConnectionId);
+                if (otherUser != null)
+                {
+                    var otherKey = GetSessionKey(sessionId, otherUser.ConnectionId);
+                    if (TranslationSessions.TryRemove(otherKey, out var otherTs))
+                    {
+                        await otherTs.DisposeAsync();
+                    }
+                }
+            }
+        }
+
+        // Remove user from session roster
         foreach (var (sessionId, session) in Sessions)
         {
             if (session.TryRemove(Context.ConnectionId, out var user))
@@ -177,4 +303,7 @@ public class TranslationHub : Hub
 
         await base.OnDisconnectedAsync(exception);
     }
+
+    private static string GetSessionKey(string sessionId, string connectionId)
+        => sessionId + "_" + connectionId;
 }

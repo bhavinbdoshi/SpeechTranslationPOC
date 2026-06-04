@@ -6,7 +6,11 @@ using SpeechTranslationPOC.Models;
 
 namespace SpeechTranslationPOC.Services;
 
-public class SpeechTranslationService : IDisposable
+/// <summary>
+/// Factory that creates continuous TranslationSession instances.
+/// Each session holds a persistent recognizer and push stream.
+/// </summary>
+public class SpeechTranslationService
 {
     private readonly AzureSpeechOptions _options;
     private readonly AzureSpeechTokenProvider _tokenProvider;
@@ -23,37 +27,21 @@ public class SpeechTranslationService : IDisposable
     }
 
     /// <summary>
-    /// Translates a PCM audio chunk (16kHz, 16-bit, mono) from the source language
-    /// to the target language. Returns recognized text, translated text, and
-    /// optionally synthesized audio bytes of the translation.
+    /// Creates and starts a continuous translation session.
     ///
     /// Currently uses the standard Speech Translation API with neural voices.
-    /// To enable Live Interpreter with Personal Voice, apply for access at
-    /// https://aka.ms/livechatinterpreter, then switch to FromEndpoint() with
-    /// the universal v2 endpoint and set VoiceName = "personal-voice".
+    /// To enable Live Interpreter with Personal Voice and auto-detect, apply
+    /// for access at https://aka.ms/livechatinterpreter, then switch to
+    /// FromEndpoint() with the universal v2 endpoint.
     /// </summary>
-    public async Task<TranslationResult> TranslateAudioAsync(
-        byte[] pcmAudio,
+    public async Task<TranslationSession> CreateSessionAsync(
         string sourceLanguage,
         string targetLanguage,
         bool synthesize)
     {
-        string authToken;
-        try
-        {
-            authToken = await _tokenProvider.GetTokenAsync();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to acquire Entra ID token.");
-            return new TranslationResult
-            {
-                Success = false,
-                TranslatedText = $"Authentication failed: {ex.Message}"
-            };
-        }
+        var authToken = await _tokenProvider.GetTokenAsync();
 
-        // Entra ID tokens must be passed in the format: aad#<resourceId>#<accessToken>
+        // Entra ID tokens use format: aad#<resourceId>#<accessToken>
         var aadToken = $"aad#{_options.ResourceId}#{authToken}";
 
         var config = SpeechTranslationConfig.FromAuthorizationToken(
@@ -67,83 +55,27 @@ public class SpeechTranslationService : IDisposable
             config.VoiceName = GetVoiceName(targetLanguage);
         }
 
-        using var pushStream = AudioInputStream.CreatePushStream(
+        var pushStream = AudioInputStream.CreatePushStream(
             AudioStreamFormat.GetWaveFormatPCM(16000, 16, 1));
-        pushStream.Write(pcmAudio);
-        pushStream.Close();
 
-        using var audioInput = AudioConfig.FromStreamInput(pushStream);
-        using var recognizer = new TranslationRecognizer(config, audioInput);
+        var audioInput = AudioConfig.FromStreamInput(pushStream);
+        var recognizer = new TranslationRecognizer(config, audioInput);
 
-        byte[]? synthesizedAudio = null;
+        var session = new TranslationSession(recognizer, pushStream, _logger);
+        await session.StartAsync();
 
-        if (synthesize)
-        {
-            var tcs = new TaskCompletionSource<byte[]?>();
-            recognizer.Synthesizing += (_, e) =>
-            {
-                var audio = e.Result.GetAudio();
-                if (audio.Length > 0)
-                {
-                    tcs.TrySetResult(audio);
-                }
-            };
+        _logger.LogInformation(
+            "Created translation session: {Source} -> {Target} (synthesize={Synth})",
+            sourceLanguage, targetLanguage, synthesize);
 
-            _ = Task.Delay(TimeSpan.FromSeconds(15)).ContinueWith(_ =>
-                tcs.TrySetResult(null));
-
-            var result = await recognizer.RecognizeOnceAsync();
-            synthesizedAudio = await tcs.Task;
-
-            return BuildResult(result, targetLanguage, synthesizedAudio);
-        }
-        else
-        {
-            var result = await recognizer.RecognizeOnceAsync();
-            return BuildResult(result, targetLanguage, null);
-        }
-    }
-
-    private TranslationResult BuildResult(
-        TranslationRecognitionResult result,
-        string targetLanguage,
-        byte[]? synthesizedAudio)
-    {
-        var langCode = GetLanguageCode(targetLanguage);
-
-        if (result.Reason == ResultReason.TranslatedSpeech)
-        {
-            result.Translations.TryGetValue(langCode, out var translatedText);
-
-            return new TranslationResult
-            {
-                RecognizedText = result.Text,
-                TranslatedText = translatedText ?? string.Empty,
-                SynthesizedAudio = synthesizedAudio,
-                Success = true
-            };
-        }
-
-        if (result.Reason == ResultReason.NoMatch)
-        {
-            _logger.LogWarning("No speech could be recognized from audio.");
-        }
-        else if (result.Reason == ResultReason.Canceled)
-        {
-            var cancellation = CancellationDetails.FromResult(result);
-            _logger.LogError("Translation canceled: {Reason} - {ErrorDetails}",
-                cancellation.Reason, cancellation.ErrorDetails);
-        }
-
-        return new TranslationResult { Success = false };
+        return session;
     }
 
     private static string GetLanguageCode(string locale) => locale.Split('-')[0];
 
     /// <summary>
     /// Maps a locale to an Azure neural voice name for speech synthesis.
-    /// Used as the standard translation voice. Once Live Interpreter access
-    /// is approved, replace with VoiceName = "personal-voice".
+    /// Once Live Interpreter access is approved, replace with "PersonalVoiceNeural".
     /// </summary>
     private static string GetVoiceName(string locale) => locale switch
     {
@@ -161,17 +93,4 @@ public class SpeechTranslationService : IDisposable
         "ru-RU" => "ru-RU-SvetlanaNeural",
         _ => "en-US-JennyNeural"
     };
-
-    public void Dispose()
-    {
-        GC.SuppressFinalize(this);
-    }
-}
-
-public class TranslationResult
-{
-    public string RecognizedText { get; set; } = string.Empty;
-    public string TranslatedText { get; set; } = string.Empty;
-    public byte[]? SynthesizedAudio { get; set; }
-    public bool Success { get; set; }
 }

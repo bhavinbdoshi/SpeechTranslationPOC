@@ -1,51 +1,52 @@
 "use strict";
 
-const connection = new signalR.HubConnectionBuilder()
+var connection = new signalR.HubConnectionBuilder()
     .withUrl("/translationHub")
     .withAutomaticReconnect()
     .build();
 
-let currentSessionId = null;
-let audioContext = null;
-let mediaStream = null;
-let workletNode = null;
-let isRecording = false;
+var currentSessionId = null;
+var audioContext = null;
+var mediaStream = null;
+var workletNode = null;
+var isRecording = false;
 
-// ??? DOM Elements ????????????????????????????????????????????????
-const setupPanel = document.getElementById("setup-panel");
-const sessionPanel = document.getElementById("session-panel");
-const joinBtn = document.getElementById("joinBtn");
-const leaveBtn = document.getElementById("leaveBtn");
-const startMicBtn = document.getElementById("startMicBtn");
-const stopMicBtn = document.getElementById("stopMicBtn");
-const listenOriginalToggle = document.getElementById("listenOriginalToggle");
-const listenLanguageLive = document.getElementById("listenLanguageLive");
-const statusArea = document.getElementById("statusArea");
-const partnerInfo = document.getElementById("partnerInfo");
-const transcript = document.getElementById("transcript");
+// Audio playback -- single context, plays immediately
+var playbackContext = null;
 
-// ??? Base64 Helpers ??????????????????????????????????????????????
+// -- DOM Elements ---------------------------------------------------------
+var setupPanel = document.getElementById("setup-panel");
+var sessionPanel = document.getElementById("session-panel");
+var joinBtn = document.getElementById("joinBtn");
+var leaveBtn = document.getElementById("leaveBtn");
+var listenOriginalToggle = document.getElementById("listenOriginalToggle");
+var listenLanguageLive = document.getElementById("listenLanguageLive");
+var statusArea = document.getElementById("statusArea");
+var partnerInfo = document.getElementById("partnerInfo");
+var transcript = document.getElementById("transcript");
+
+// -- Base64 Helpers -------------------------------------------------------
 
 function uint8ArrayToBase64(bytes) {
-    let binary = "";
-    for (let i = 0; i < bytes.length; i++) {
+    var binary = "";
+    for (var i = 0; i < bytes.length; i++) {
         binary += String.fromCharCode(bytes[i]);
     }
     return btoa(binary);
 }
 
 function base64ToUint8Array(base64) {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
+    var binary = atob(base64);
+    var bytes = new Uint8Array(binary.length);
+    for (var i = 0; i < binary.length; i++) {
         bytes[i] = binary.charCodeAt(i);
     }
     return bytes;
 }
 
-// ??? SignalR Event Handlers ??????????????????????????????????????
+// -- SignalR Event Handlers ------------------------------------------------
 
-connection.on("JoinedSession", (sessionId, displayName) => {
+connection.on("JoinedSession", function (sessionId, displayName) {
     currentSessionId = sessionId;
     document.getElementById("activeSessionId").textContent = sessionId;
     document.getElementById("activeUserName").textContent = displayName;
@@ -54,49 +55,65 @@ connection.on("JoinedSession", (sessionId, displayName) => {
     setStatus("Connected. Waiting for partner...");
 });
 
-connection.on("UserJoined", (displayName, speakLanguage) => {
-    partnerInfo.innerHTML = `<strong>${escapeHtml(displayName)}</strong> joined (speaks ${escapeHtml(speakLanguage)})`;
-    setStatus("Partner connected! You can start speaking.");
-    addTranscriptEntry("system", `${displayName} joined the session.`);
+connection.on("UserJoined", function (displayName, speakLanguage) {
+    partnerInfo.innerHTML = "<strong>" + escapeHtml(displayName) + "</strong> joined (speaks " + escapeHtml(speakLanguage) + ")";
+    setStatus("Partner connected!");
+    addTranscriptEntry("system", displayName + " joined the session.");
 });
 
-connection.on("UserLeft", (displayName) => {
+connection.on("UserLeft", function (displayName) {
     partnerInfo.innerHTML = "";
     setStatus("Partner disconnected. Waiting...");
-    addTranscriptEntry("system", `${displayName} left the session.`);
+    addTranscriptEntry("system", displayName + " left the session.");
+    stopMicrophone();
 });
 
-connection.on("ReceiveAudio", (audioBase64, speakerName, recognizedText, translatedText, isOriginal) => {
+// Partial text -- shows while speaker is still talking
+connection.on("ReceivePartial", function (speakerName, recognizedText, partialTranslation) {
+    updatePartialTranscript(speakerName, recognizedText, partialTranslation);
+});
+
+// Final text -- arrives when sentence is complete
+connection.on("ReceiveText", function (speakerName, recognizedText, translatedText) {
+    finalizeTranscriptEntry(speakerName, recognizedText, translatedText);
+});
+
+// Translated audio -- arrives independently, play IMMEDIATELY
+connection.on("ReceiveAudio", function (audioBase64, speakerName) {
     if (audioBase64 && audioBase64.length > 0) {
-        const audioBytes = base64ToUint8Array(audioBase64);
-        playAudio(audioBytes, isOriginal);
-    }
-
-    if (!isOriginal && recognizedText) {
-        addTranscriptEntry(speakerName, recognizedText, translatedText);
+        var audioBytes = base64ToUint8Array(audioBase64);
+        playAudioNow(audioBytes);
     }
 });
 
-connection.on("ListenModeChanged", (listenOriginal) => {
+// Original voice audio (raw PCM) -- for "listen original" mode
+connection.on("ReceiveOriginalAudio", function (pcmBase64, speakerName) {
+    if (pcmBase64 && pcmBase64.length > 0) {
+        var audioBytes = base64ToUint8Array(pcmBase64);
+        playPcmNow(audioBytes);
+    }
+});
+
+connection.on("ListenModeChanged", function (listenOriginal) {
     setStatus(listenOriginal ? "Listening to original voice." : "Listening to translated voice.");
 });
 
-connection.on("ListenLanguageChanged", (language) => {
-    setStatus(`Now hearing translations in ${language}.`);
+connection.on("ListenLanguageChanged", function (language) {
+    setStatus("Now hearing translations in " + language + ".");
 });
 
-connection.on("Error", (message) => {
-    setStatus(`Error: ${message}`);
+connection.on("Error", function (message) {
+    setStatus("Error: " + message);
     alert(message);
 });
 
-// ??? Join / Leave ????????????????????????????????????????????????
+// -- Join / Leave ---------------------------------------------------------
 
-joinBtn.addEventListener("click", async () => {
-    const sessionId = document.getElementById("sessionId").value.trim();
-    const displayName = document.getElementById("displayName").value.trim();
-    const speakLang = document.getElementById("speakLanguage").value;
-    const listenLang = document.getElementById("listenLanguage").value;
+joinBtn.addEventListener("click", async function () {
+    var sessionId = document.getElementById("sessionId").value.trim();
+    var displayName = document.getElementById("displayName").value.trim();
+    var speakLang = document.getElementById("speakLanguage").value;
+    var listenLang = document.getElementById("listenLanguage").value;
 
     if (!sessionId || !displayName) {
         alert("Please enter a session ID and your name.");
@@ -105,17 +122,37 @@ joinBtn.addEventListener("click", async () => {
 
     listenLanguageLive.value = listenLang;
 
+    // Create playback context during user gesture (will not be suspended)
+    playbackContext = new (window.AudioContext || window.webkitAudioContext)();
+
+    // Open mic while we have user gesture context
+    await startMicrophone();
+
+    if (!isRecording) {
+        setStatus("Microphone is required to join a session.");
+        if (playbackContext) {
+            playbackContext.close();
+            playbackContext = null;
+        }
+        return;
+    }
+
     try {
         await connection.start();
         await connection.invoke("JoinSession", sessionId, displayName, speakLang, listenLang);
     } catch (err) {
         console.error("Failed to join:", err);
         setStatus("Connection failed. Check console.");
+        stopMicrophone();
     }
 });
 
-leaveBtn.addEventListener("click", async () => {
-    stopRecording();
+leaveBtn.addEventListener("click", async function () {
+    stopMicrophone();
+    if (playbackContext) {
+        playbackContext.close();
+        playbackContext = null;
+    }
     await connection.stop();
     currentSessionId = null;
     sessionPanel.classList.add("d-none");
@@ -124,35 +161,27 @@ leaveBtn.addEventListener("click", async () => {
     partnerInfo.innerHTML = "";
 });
 
-// ??? Listen Settings ?????????????????????????????????????????????
+// -- Listen Settings ------------------------------------------------------
 
-listenOriginalToggle.addEventListener("change", () => {
+listenOriginalToggle.addEventListener("change", function () {
     if (currentSessionId) {
         connection.invoke("SetListenMode", currentSessionId, listenOriginalToggle.checked);
     }
 });
 
-listenLanguageLive.addEventListener("change", () => {
+listenLanguageLive.addEventListener("change", function () {
     if (currentSessionId) {
         connection.invoke("SetListenLanguage", currentSessionId, listenLanguageLive.value);
     }
 });
 
-// ??? Microphone Recording (AudioWorklet) ?????????????????????????
+// -- Microphone -----------------------------------------------------------
 
-startMicBtn.addEventListener("click", async () => {
-    await startRecording();
-});
+async function startMicrophone() {
+    if (isRecording) return;
 
-stopMicBtn.addEventListener("click", () => {
-    stopRecording();
-});
-
-async function startRecording() {
     try {
         audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-
-        // Load the AudioWorklet processor module
         await audioContext.audioWorklet.addModule("/js/pcm-processor.js");
 
         mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -165,36 +194,29 @@ async function startRecording() {
             }
         });
 
-        const source = audioContext.createMediaStreamSource(mediaStream);
-
+        var source = audioContext.createMediaStreamSource(mediaStream);
         workletNode = new AudioWorkletNode(audioContext, "pcm-processor");
 
-        // Receive PCM chunks from the worklet thread and send as base64
-        workletNode.port.onmessage = (event) => {
+        workletNode.port.onmessage = function (event) {
             if (!isRecording || !currentSessionId) return;
-
-            const pcmBuffer = event.data; // ArrayBuffer
-            const chunk = new Uint8Array(pcmBuffer);
-            const base64 = uint8ArrayToBase64(chunk);
-
+            var chunk = new Uint8Array(event.data);
+            var base64 = uint8ArrayToBase64(chunk);
             connection.invoke("SendAudio", currentSessionId, base64)
-                .catch(err => console.error("Send audio error:", err));
+                .catch(function (err) { console.error("Send audio error:", err); });
         };
 
         source.connect(workletNode);
         workletNode.connect(audioContext.destination);
 
         isRecording = true;
-        startMicBtn.classList.add("d-none");
-        stopMicBtn.classList.remove("d-none");
-        setStatus("?? Recording... Speak now!");
+        setStatus("Microphone active. Speak naturally!");
     } catch (err) {
         console.error("Microphone error:", err);
         setStatus("Microphone access denied. Please allow microphone permissions.");
     }
 }
 
-function stopRecording() {
+function stopMicrophone() {
     isRecording = false;
 
     if (workletNode) {
@@ -203,7 +225,7 @@ function stopRecording() {
         workletNode = null;
     }
     if (mediaStream) {
-        mediaStream.getTracks().forEach(track => track.stop());
+        mediaStream.getTracks().forEach(function (t) { t.stop(); });
         mediaStream = null;
     }
     if (audioContext) {
@@ -211,58 +233,99 @@ function stopRecording() {
         audioContext = null;
     }
 
-    startMicBtn.classList.remove("d-none");
-    stopMicBtn.classList.add("d-none");
     setStatus("Microphone stopped.");
 }
 
-// ??? Audio Playback ??????????????????????????????????????????????
+// -- Audio Playback (immediate, no queue) ---------------------------------
 
-function playAudio(audioBytes, isOriginalPcm) {
+function playAudioNow(audioBytes) {
+    if (!playbackContext || playbackContext.state === "closed") return;
+
+    if (playbackContext.state === "suspended") {
+        playbackContext.resume().then(function () {
+            playAudioNow(audioBytes);
+        });
+        return;
+    }
+
+    var arrayBuffer = audioBytes.buffer.slice(
+        audioBytes.byteOffset,
+        audioBytes.byteOffset + audioBytes.byteLength
+    );
+
+    // Try to decode as WAV/MP3 first
     try {
-        const playbackContext = new (window.AudioContext || window.webkitAudioContext)();
-
-        if (isOriginalPcm) {
-            const int16Array = new Int16Array(audioBytes.buffer);
-            const float32 = new Float32Array(int16Array.length);
-            for (let i = 0; i < int16Array.length; i++) {
-                float32[i] = int16Array[i] / 32768.0;
-            }
-            const buffer = playbackContext.createBuffer(1, float32.length, 16000);
-            buffer.getChannelData(0).set(float32);
-            const source = playbackContext.createBufferSource();
-            source.buffer = buffer;
+        playbackContext.decodeAudioData(arrayBuffer, function (decoded) {
+            var source = playbackContext.createBufferSource();
+            source.buffer = decoded;
             source.connect(playbackContext.destination);
             source.start();
-            source.onended = () => playbackContext.close();
-        } else {
-            playbackContext.decodeAudioData(audioBytes.buffer, (decodedBuffer) => {
-                const source = playbackContext.createBufferSource();
-                source.buffer = decodedBuffer;
-                source.connect(playbackContext.destination);
-                source.start();
-                source.onended = () => playbackContext.close();
-            }, (err) => {
-                console.warn("Could not decode synthesized audio:", err);
-                playbackContext.close();
-            });
-        }
+        }, function (err) {
+            // Fallback: treat as raw 16-bit PCM
+            console.warn("decodeAudioData failed, playing as PCM:", err);
+            playPcmNow(audioBytes);
+        });
     } catch (err) {
-        console.error("Playback error:", err);
+        console.warn("decodeAudioData threw, playing as PCM:", err);
+        playPcmNow(audioBytes);
     }
 }
 
-// ??? Helpers ?????????????????????????????????????????????????????
+function playPcmNow(audioBytes) {
+    if (!playbackContext || playbackContext.state === "closed") return;
 
-function setStatus(message) {
-    statusArea.textContent = message;
+    var rawBuffer = audioBytes.buffer.slice(
+        audioBytes.byteOffset,
+        audioBytes.byteOffset + audioBytes.byteLength
+    );
+    var int16 = new Int16Array(rawBuffer);
+    var float32 = new Float32Array(int16.length);
+    for (var i = 0; i < int16.length; i++) {
+        float32[i] = int16[i] / 32768.0;
+    }
+    var buffer = playbackContext.createBuffer(1, float32.length, 16000);
+    buffer.getChannelData(0).set(float32);
+    var source = playbackContext.createBufferSource();
+    source.buffer = buffer;
+    source.connect(playbackContext.destination);
+    source.start();
+}
+
+// -- Transcript Helpers ---------------------------------------------------
+
+var partialEntry = null;
+
+function updatePartialTranscript(speaker, recognizedText, partialTranslation) {
+    var placeholder = transcript.querySelector(".text-muted.text-center");
+    if (placeholder) placeholder.remove();
+
+    if (!partialEntry) {
+        partialEntry = document.createElement("div");
+        partialEntry.className = "mb-2 p-2 rounded";
+        partialEntry.style.background = "#fff3cd";
+        transcript.appendChild(partialEntry);
+    }
+
+    partialEntry.innerHTML =
+        "<strong>" + escapeHtml(speaker) + ":</strong>" +
+        '<div class="small text-muted fst-italic">[speaking] ' + escapeHtml(recognizedText) + "</div>" +
+        '<div class="small text-warning-emphasis">[translating] ' + escapeHtml(partialTranslation) + "</div>";
+    transcript.scrollTop = transcript.scrollHeight;
+}
+
+function finalizeTranscriptEntry(speaker, originalText, translatedText) {
+    if (partialEntry) {
+        partialEntry.remove();
+        partialEntry = null;
+    }
+    addTranscriptEntry(speaker, originalText, translatedText);
 }
 
 function addTranscriptEntry(speaker, originalText, translatedText) {
-    const placeholder = transcript.querySelector(".text-muted.text-center");
+    var placeholder = transcript.querySelector(".text-muted.text-center");
     if (placeholder) placeholder.remove();
 
-    const entry = document.createElement("div");
+    var entry = document.createElement("div");
     entry.className = "mb-2 p-2 rounded";
 
     if (speaker === "system") {
@@ -270,19 +333,22 @@ function addTranscriptEntry(speaker, originalText, translatedText) {
         entry.textContent = originalText;
     } else {
         entry.style.background = "#e7f1ff";
-        entry.innerHTML = `
-            <strong>${escapeHtml(speaker)}:</strong>
-            <div class="small text-muted">Original: ${escapeHtml(originalText)}</div>
-            ${translatedText ? `<div class="small text-primary">Translated: ${escapeHtml(translatedText)}</div>` : ""}
-        `;
+        entry.innerHTML =
+            "<strong>" + escapeHtml(speaker) + ":</strong>" +
+            '<div class="small text-muted">Original: ' + escapeHtml(originalText) + "</div>" +
+            (translatedText ? '<div class="small text-primary">Translated: ' + escapeHtml(translatedText) + "</div>" : "");
     }
 
     transcript.appendChild(entry);
     transcript.scrollTop = transcript.scrollHeight;
 }
 
+function setStatus(message) {
+    statusArea.textContent = message;
+}
+
 function escapeHtml(text) {
-    const div = document.createElement("div");
+    var div = document.createElement("div");
     div.textContent = text;
     return div.innerHTML;
 }
