@@ -1,0 +1,135 @@
+﻿@page
+@model IndexModel
+@{
+    ViewData["Title"] = "Real-Time Speech Translation";
+}
+
+<div class="container mt-4">
+    <h1 class="text-center mb-4">🌐 Real-Time Speech Translation</h1>
+
+    <!-- Session Setup -->
+    <div id="setup-panel" class="card mb-4">
+        <div class="card-body">
+            <h5 class="card-title">Join a Session</h5>
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <label for="sessionId" class="form-label">Session ID</label>
+                    <input type="text" class="form-control" id="sessionId" value="session-1" />
+                </div>
+                <div class="col-md-3">
+                    <label for="displayName" class="form-label">Your Name</label>
+                    <input type="text" class="form-control" id="displayName" placeholder="Enter name" />
+                </div>
+                <div class="col-md-3">
+                    <label for="speakLanguage" class="form-label">I Speak</label>
+                    <select class="form-select" id="speakLanguage">
+                        <option value="en-US">English (US)</option>
+                        <option value="es-ES">Spanish (Spain)</option>
+                        <option value="fr-FR">French (France)</option>
+                        <option value="de-DE">German (Germany)</option>
+                        <option value="zh-CN">Chinese (Mandarin)</option>
+                        <option value="ja-JP">Japanese</option>
+                        <option value="pt-BR">Portuguese (Brazil)</option>
+                        <option value="hi-IN">Hindi (India)</option>
+                        <option value="ar-SA">Arabic (Saudi Arabia)</option>
+                        <option value="ko-KR">Korean</option>
+                        <option value="it-IT">Italian</option>
+                        <option value="ru-RU">Russian</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="listenLanguage" class="form-label">I Want to Hear</label>
+                    <select class="form-select" id="listenLanguage">
+                        <option value="en-US">English (US)</option>
+                        <option value="es-ES">Spanish (Spain)</option>
+                        <option value="fr-FR">French (France)</option>
+                        <option value="de-DE">German (Germany)</option>
+                        <option value="zh-CN">Chinese (Mandarin)</option>
+                        <option value="ja-JP">Japanese</option>
+                        <option value="pt-BR">Portuguese (Brazil)</option>
+                        <option value="hi-IN">Hindi (India)</option>
+                        <option value="ar-SA">Arabic (Saudi Arabia)</option>
+                        <option value="ko-KR">Korean</option>
+                        <option value="it-IT">Italian</option>
+                        <option value="ru-RU">Russian</option>
+                    </select>
+                </div>
+            </div>
+            <button id="joinBtn" class="btn btn-primary mt-3">Join Session</button>
+        </div>
+    </div>
+
+    <!-- Active Session -->
+    <div id="session-panel" class="d-none">
+        <div class="row">
+            <!-- Controls -->
+            <div class="col-md-6">
+                <div class="card mb-3">
+                    <div class="card-body">
+                        <h5 class="card-title">Session: <span id="activeSessionId"></span></h5>
+                        <p class="text-muted">Connected as: <strong id="activeUserName"></strong></p>
+
+                        <div class="d-flex gap-2 mb-3">
+                            <button id="startMicBtn" class="btn btn-success">🎤 Start Speaking</button>
+                            <button id="stopMicBtn" class="btn btn-danger d-none">⏹ Stop Speaking</button>
+                        </div>
+
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" id="listenOriginalToggle">
+                            <label class="form-check-label" for="listenOriginalToggle">
+                                Listen to original voice (no translation)
+                            </label>
+                        </div>
+
+                        <div class="mb-2">
+                            <label for="listenLanguageLive" class="form-label">Change Listen Language</label>
+                            <select class="form-select" id="listenLanguageLive">
+                                <option value="en-US">English (US)</option>
+                                <option value="es-ES">Spanish (Spain)</option>
+                                <option value="fr-FR">French (France)</option>
+                                <option value="de-DE">German (Germany)</option>
+                                <option value="zh-CN">Chinese (Mandarin)</option>
+                                <option value="ja-JP">Japanese</option>
+                                <option value="pt-BR">Portuguese (Brazil)</option>
+                                <option value="hi-IN">Hindi (India)</option>
+                                <option value="ar-SA">Arabic (Saudi Arabia)</option>
+                                <option value="ko-KR">Korean</option>
+                                <option value="it-IT">Italian</option>
+                                <option value="ru-RU">Russian</option>
+                            </select>
+                        </div>
+
+                        <button id="leaveBtn" class="btn btn-outline-secondary mt-2">Leave Session</button>
+                    </div>
+                </div>
+
+                <!-- Status -->
+                <div class="card mb-3">
+                    <div class="card-body">
+                        <h6>Status</h6>
+                        <div id="statusArea" class="text-muted small">Not connected</div>
+                        <div id="partnerInfo" class="mt-2 text-muted small"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Transcript -->
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">Conversation Transcript</h5>
+                        <div id="transcript" class="border rounded p-3"
+                             style="height: 400px; overflow-y: auto; background: #f8f9fa;">
+                            <p class="text-muted text-center">Waiting for conversation...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js"></script>
+    <script src="~/js/translation.js"></script>
+}
