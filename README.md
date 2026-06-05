@@ -134,14 +134,13 @@ Provide candidate languages, or use an open range for no specified source langua
 
 ### appsettings.json
 
-{ "AzureSpeech": { "Region": "your-region", "ResourceId": "/subscriptions/{sub-id}/resourceGroups/{rg}/providers/Microsoft.CognitiveServices/accounts/{name}", "ResourceName": "your-speech-resource-name", "SubscriptionKey": "your-key-if-needed-for-personal-voice" } }
 
 | Setting | Description |
 |---------|-------------|
 | `Region` | Azure region (e.g., `westcentralus`, `eastus`) |
 | `ResourceId` | Full ARM resource ID of your Speech resource |
 | `ResourceName` | Name of your Speech resource (the part before `.cognitiveservices.azure.com`) |
-| `SubscriptionKey` | Speech resource key (only needed if AAD doesn't work for Live Interpreter) |
+| `SpeechAccessKey` | Speech resource key (only needed if AAD doesn't work for Live Interpreter) |
 
 ## Testing Locally
 
