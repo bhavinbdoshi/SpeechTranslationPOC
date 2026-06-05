@@ -77,34 +77,40 @@ Interim results stream back while the person is still speaking; final results ar
 
 #### WebSocket endpoint. The SDK opens a persistent, bidirectional WebSocket (wss://) connection — audio flows up and results stream down. The SDK manages the socket for you based on the configuration:
 
-v1 (region + key) — suitable for a single, known source language.
-v2 "universal" endpoint — required for language identification, multilingual translation, and Live Interpreter. It is built using FromEndpoint rather than FromSubscription, e.g. wss://{region}.stt.speech.microsoft.com/speech/universal/v2.
-Audio capture & packets. Audio is streamed to the service in small chunks (packets) as it is captured, rather than buffered whole. The default expected format is 16 kHz, 16-bit, mono PCM. Input can come from a microphone, a WAV file, a push stream (you push bytes as you receive them), or a pull stream (the SDK pulls from your callback). Recognition can run single-shot or, more commonly for translation, continuously.
+    v1 (region + key) — suitable for a single, known source language.
+
+    v2 "universal" endpoint — required for language identification, multilingual translation, and Live Interpreter. It is built using FromEndpoint rather than FromSubscription, e.g. wss://{region}.stt.speech.microsoft.com/speech/universal/v2.
+    
+    Audio capture & packets. Audio is streamed to the service in small chunks (packets) as it is captured, rather than buffered whole. The default expected format is 16 kHz, 16-bit, mono PCM. Input can come from a microphone, a WAV file, a push stream (you push bytes as you receive them), or a pull stream (the SDK pulls from your callback). Recognition can run single-shot or, more commonly for translation, continuously.
 
 #### Recognizing vs. synthesis. A TranslationRecognizer raises events you subscribe to:
 
-Recognizing — interim, live partial results (source text plus in-progress translation); ideal for live captions.
-Recognized — final, stable text with finalized translations.
-Synthesizing — chunks of translated audio, when speech-to-speech output is enabled.
-Canceled — error or end of stream, carrying an error code and details.
-Translations are returned in a dictionary keyed by target language. For spoken output, you set a voice and handle the Synthesizing event to play or forward the audio. Live Interpreter is the premium speech-to-speech path — continuous language identification plus low-latency translated speech in a personal voice that preserves the speaker's tone (requires the v2 endpoint and gated Personal Voice access).
+    Recognizing — interim, live partial results (source text plus in-progress translation); ideal for live captions.
+
+    Recognized — final, stable text with finalized translations.
+
+    Synthesizing — chunks of translated audio, when speech-to-speech output is enabled.
+
+    Canceled — error or end of stream, carrying an error code and details.
+
+    Translations are returned in a dictionary keyed by target language. For spoken output, you set a voice and handle the Synthesizing event to play or forward the audio. Live Interpreter is the premium speech-to-speech path — continuous language identification plus low-latency translated speech in a personal voice that preserves the speaker's tone (requires the v2 endpoint and gated Personal Voice access).
 
 #### Authentication. You can authenticate with a subscription key and region/endpoint, or with Microsoft Entra ID (the identity needs the Cognitive Services User role).
 
 #### Language identification. Provide candidate languages, or use an open range for no specified source language (multilingual / Live Interpreter). Target languages must use full BCP-47 locale codes (e.g. zh-CN, en-US) rather than bare codes.
 
 ### Resources & links
-Speech translation overview — https://learn.microsoft.com/azure/ai-services/speech-service/speech-translation
-How to translate speech (code walkthroughs) — https://learn.microsoft.com/azure/ai-services/speech-service/how-to-translate-speech
-Quickstart — https://learn.microsoft.com/azure/ai-services/speech-service/get-started-speech-translation
-Official SDK code samples (all languages) — https://github.com/Azure-Samples/cognitive-services-speech-sdk
-Language & voice support (valid locale codes) — https://learn.microsoft.com/azure/ai-services/speech-service/language-support
-Supported regions — https://learn.microsoft.com/azure/ai-services/speech-service/regions
-Sample POC repository — https://github.com/bhavinbdoshi/SpeechTranslationPOC
-Within the official samples repository, the translation samples are located under each language folder, for example:
+- Speech translation overview — https://learn.microsoft.com/azure/ai-services/speech-service/speech-translation
+- How to translate speech (code walkthroughs) — https://learn.microsoft.com/azure/ai-services/speech-service/how-to-translate-speech
+- Quickstart — https://learn.microsoft.com/azure/ai-services/speech-service/get-started-speech-translation
+- Official SDK code samples (all languages) — https://github.com/Azure-Samples/cognitive-services-speech-sdk
+- Language & voice support (valid locale codes) — https://learn.microsoft.com/azure/ai-services/speech-service/language-support
+- Supported regions — https://learn.microsoft.com/azure/ai-services/speech-service/regions
+- Sample POC repository — https://github.com/bhavinbdoshi/SpeechTranslationPOC
+- Within the official samples repository, the translation samples are located under each language folder, for example:
 
-C#: samples/csharp/dotnetcore/console/translation_samples.cs
-C++: samples/cpp/windows/console/samples/translation_samples.cpp
+- C#: samples/csharp/dotnetcore/console/translation_samples.cs
+- C++: samples/cpp/windows/console/samples/translation_samples.cpp
 Python: samples/python/console/translation_sample.py
 
 ## Prerequisites
