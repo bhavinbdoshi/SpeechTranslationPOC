@@ -81,7 +81,11 @@ A real-time speech-to-speech translation proof of concept built with ASP.NET Cor
 
 - v2 "universal" endpoint — required for language identification, multilingual translation, and Live Interpreter. It is built using FromEndpoint rather than FromSubscription, e.g. wss://{region}.stt.speech.microsoft.com/speech/universal/v2.
     
-- Audio capture & packets. Audio is streamed to the service in small chunks (packets) as it is captured, rather than buffered whole. The default expected format is 16 kHz, 16-bit, mono PCM. Input can come from a microphone, a WAV file, a push stream (you push bytes as you receive them), or a pull stream (the SDK pulls from your callback). Recognition can run single-shot or, more commonly for translation, continuously.
+- Audio capture & packets. Audio is streamed to the service in small chunks (packets) as it is captured, rather than buffered whole. 
+- The default expected format is 16 kHz, 16-bit, mono PCM.  
+- Input can come from a microphone, a WAV file, a push stream (you push bytes as you receive them), or a pull stream (the SDK pulls from your callback). 
+
+- Recognition can run single-shot or, more commonly for translation, continuously.
 
 #### Recognizing vs. synthesis. A TranslationRecognizer raises events you subscribe to:
 
