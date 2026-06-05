@@ -33,7 +33,7 @@ Browser (User A)                    Server                         Browser (User
 - Auto-detects source language (no selection needed)
 - Translation uses the speaker's own voice clone
 - Uses `SpeechTranslationConfig.FromEndpoint` with the v2 universal endpoint
-- **Requires separate access approval** at https://aka.ms/livechatinterpreter
+- **Requires separate access approval** at https://aka.ms/customneural
 - Voice name: `personal-voice`
 
 ## Prerequisites
