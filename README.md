@@ -95,9 +95,13 @@ A real-time speech-to-speech translation proof of concept built with ASP.NET Cor
 
 - Translations are returned in a dictionary keyed by target language. For spoken output, you set a voice and handle the Synthesizing event to play or forward the audio. Live Interpreter is the premium speech-to-speech path — continuous language identification plus low-latency translated speech in a personal voice that preserves the speaker's tone (requires the v2 endpoint and gated Personal Voice access).
 
-#### Authentication. You can authenticate with a subscription key and region/endpoint, or with Microsoft Entra ID (the identity needs the Cognitive Services User role).
+#### Authentication. 
 
-#### Language identification. Provide candidate languages, or use an open range for no specified source language (multilingual / Live Interpreter). Target languages must use full BCP-47 locale codes (e.g. zh-CN, en-US) rather than bare codes.
+You can authenticate with a subscription key and region/endpoint, or with Microsoft Entra ID (the identity needs the Cognitive Services User role).
+
+#### Language identification. 
+
+Provide candidate languages, or use an open range for no specified source language (multilingual / Live Interpreter). Target languages must use full BCP-47 locale codes (e.g. zh-CN, en-US) rather than bare codes.
 
 ### Resources & links
 - Speech translation overview — https://learn.microsoft.com/azure/ai-services/speech-service/speech-translation
