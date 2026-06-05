@@ -1,7 +1,7 @@
 ﻿@page
 @model IndexModel
 @{
-    ViewData["Title"] = "Real-Time Speech Translation";
+    ViewData["Title"] = "Real-Time Speech Translation using Azure Speech SDK";
 }
 
 <div class="container mt-4">
@@ -15,7 +15,7 @@
             <!-- Step 1: Session ID and Name -->
             <div class="row g-3 mb-4">
                 <div class="col-md-6">
-                    <label for="sessionId" class="form-label">Session ID</label>
+                    <label for="sessionId" class="form-label">Session ID - Unique text based session name (2 people max)</label>
                     <input type="text" class="form-control" id="sessionId" value="session-1" />
                 </div>
                 <div class="col-md-6">
@@ -103,6 +103,11 @@
 
                 <!-- Personal Voice Mode Languages -->
                 <div id="personalVoiceLanguages" class="d-none">
+                    <div class="alert alert-warning small py-2 mb-3">
+                        <strong>Note:</strong> Personal Voice (Live Interpreter) requires
+                        <a href="https://aka.ms/customneural" target="_blank">approval from Microsoft</a> to use.
+                        This feature is not fully tested for all voice languages.
+                    </div>
                     <div class="row g-3">
                         <div class="col-md-6">
                             <label class="form-label">I Speak</label>
@@ -175,6 +180,22 @@
                 </div>
             </div>
         </div>
+    </div>
+</div>
+
+<!-- Disclaimer and Source -->
+<div class="container mb-4">
+    <div class="alert alert-info text-center">
+        <p class="mb-1">
+            <strong>Disclaimer:</strong> This is a sample application designed to demonstrate and understand the
+            <a href="https://learn.microsoft.com/en-us/azure/ai-services/speech-service/speech-translation" target="_blank">Azure Speech Translation Service</a>.
+            It is not intended for production use.
+        </p>
+        <p class="mb-0">
+            <a href="https://github.com/bhavinbdoshi/SpeechTranslationPOC" target="_blank" rel="noopener noreferrer">
+                <i class="bi bi-github"></i> View source on GitHub
+            </a>
+        </p>
     </div>
 </div>
 
