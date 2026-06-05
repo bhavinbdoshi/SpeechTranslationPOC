@@ -111,7 +111,8 @@ Provide candidate languages, or use an open range for no specified source langua
 - Language & voice support (valid locale codes) — https://learn.microsoft.com/azure/ai-services/speech-service/language-support
 - Supported regions — https://learn.microsoft.com/azure/ai-services/speech-service/regions
 - Sample POC repository — https://github.com/bhavinbdoshi/SpeechTranslationPOC
-- Within the official samples repository, the translation samples are located under each language folder, for example:
+
+#### Within the official samples repository, the translation samples are located under each language folder, for example:
 
 - C#: samples/csharp/dotnetcore/console/translation_samples.cs
 - C++: samples/cpp/windows/console/samples/translation_samples.cpp
