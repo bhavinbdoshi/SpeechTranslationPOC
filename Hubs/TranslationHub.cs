@@ -24,7 +24,8 @@ public class TranslationHub : Hub
         _logger = logger;
     }
 
-    public async Task JoinSession(string sessionId, string displayName, string speakLanguage, string listenLanguage)
+    public async Task JoinSession(string sessionId, string displayName, string speakLanguage,
+        string listenLanguage, bool usePersonalVoice)
     {
         var session = Sessions.GetOrAdd(sessionId, _ => new ConcurrentDictionary<string, SessionUser>());
 
@@ -40,7 +41,8 @@ public class TranslationHub : Hub
             DisplayName = displayName,
             SpeakLanguage = speakLanguage,
             ListenLanguage = listenLanguage,
-            ListenOriginal = false
+            ListenOriginal = false,
+            UsePersonalVoice = usePersonalVoice
         };
 
         session[Context.ConnectionId] = user;
@@ -57,8 +59,9 @@ public class TranslationHub : Hub
             }
         }
 
-        _logger.LogInformation("{User} joined session {Session} (speak={Speak}, listen={Listen})",
-            displayName, sessionId, speakLanguage, listenLanguage);
+        _logger.LogInformation(
+            "{User} joined session {Session} (speak={Speak}, listen={Listen}, personalVoice={PV})",
+            displayName, sessionId, speakLanguage, listenLanguage, usePersonalVoice);
 
         // Auto-start translation when both users are present
         if (session.Count == 2)
@@ -67,10 +70,6 @@ public class TranslationHub : Hub
         }
     }
 
-    /// <summary>
-    /// Creates translation sessions for both speakers in the session.
-    /// Called automatically when the second user joins.
-    /// </summary>
     private async Task StartTranslationForSession(
         string sessionId,
         ConcurrentDictionary<string, SessionUser> session)
@@ -81,10 +80,7 @@ public class TranslationHub : Hub
         var userA = users[0];
         var userB = users[1];
 
-        // A speaks -> B listens
         await CreateTranslationLink(sessionId, userA, userB);
-
-        // B speaks -> A listens
         await CreateTranslationLink(sessionId, userB, userA);
 
         _logger.LogInformation("Auto-started translation for session {Session}", sessionId);
@@ -96,7 +92,6 @@ public class TranslationHub : Hub
 
         var sessionKey = GetSessionKey(sessionId, speaker.ConnectionId);
 
-        // Clean up any existing session
         if (TranslationSessions.TryRemove(sessionKey, out var old))
         {
             await old.DisposeAsync();
@@ -104,29 +99,37 @@ public class TranslationHub : Hub
 
         try
         {
-            var translationSession = await _translationService.CreateSessionAsync(
-                speaker.SpeakLanguage, listener.ListenLanguage, synthesize: true);
+            TranslationSession translationSession;
 
-            // Use IHubContext (singleton) because Hub.Clients is disposed after method returns
+            if (speaker.UsePersonalVoice)
+            {
+                // Live Interpreter: auto-detect source, personal voice output
+                translationSession = await _translationService.CreatePersonalVoiceSessionAsync(
+                    listener.ListenLanguage);
+            }
+            else
+            {
+                // Standard: explicit source language, neural voice
+                translationSession = await _translationService.CreateSessionAsync(
+                    speaker.SpeakLanguage, listener.ListenLanguage, synthesize: true);
+            }
+
             var hubContext = _hubContext;
             var speakerName = speaker.DisplayName;
             var listenerConnId = listener.ConnectionId;
 
-            // Text arrives immediately when recognition completes
             translationSession.OnPartialResult += async (recognizedText, partialTranslation) =>
             {
                 await hubContext.Clients.Client(listenerConnId)
                     .SendAsync("ReceivePartial", speakerName, recognizedText, partialTranslation);
             };
 
-            // Final text (no audio bundled -- audio comes separately)
             translationSession.OnTranslationTextReceived += async (result) =>
             {
                 await hubContext.Clients.Client(listenerConnId)
                     .SendAsync("ReceiveText", speakerName, result.RecognizedText, result.TranslatedText);
             };
 
-            // Audio arrives independently (usually shortly after text)
             translationSession.OnSynthesisAudioReceived += async (audioBytes) =>
             {
                 var audioBase64 = Convert.ToBase64String(audioBytes);
@@ -137,13 +140,20 @@ public class TranslationHub : Hub
             TranslationSessions[sessionKey] = translationSession;
 
             _logger.LogInformation(
-                "Translation link created: {Speaker} ({SpeakLang}) -> {Listener} ({ListenLang})",
-                speakerName, speaker.SpeakLanguage, listener.DisplayName, listener.ListenLanguage);
+                "Translation link created: {Speaker} -> {Listener} (personalVoice={PV})",
+                speakerName, listener.DisplayName, speaker.UsePersonalVoice);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to create translation link {Speaker} -> {Listener}",
                 speaker.DisplayName, listener.DisplayName);
+            
+            var errorMsg = ex.Message.Contains("Live Interpreter")
+                ? "Personal Voice (Live Interpreter) access not yet approved for this resource. Please use Standard mode."
+                : "Failed to start translation: " + ex.Message;
+            
+            await _hubContext.Clients.Client(speaker.ConnectionId)
+                .SendAsync("Error", errorMsg);
         }
     }
 
@@ -157,7 +167,6 @@ public class TranslationHub : Hub
         user.ListenOriginal = listenOriginal;
         await Clients.Caller.SendAsync("ListenModeChanged", listenOriginal);
 
-        // Find the speaker whose translation targets this listener
         var speaker = session.Values.FirstOrDefault(u => u.ConnectionId != Context.ConnectionId);
         if (speaker == null) return;
 
@@ -165,52 +174,23 @@ public class TranslationHub : Hub
 
         if (listenOriginal)
         {
-            // Stop translation -- listener wants raw audio only
             if (TranslationSessions.TryRemove(sessionKey, out var ts))
             {
                 await ts.DisposeAsync();
-                _logger.LogInformation("Translation stopped: {Listener} switched to original voice.",
-                    user.DisplayName);
             }
         }
         else
         {
-            // Restart translation -- listener wants translated audio again
-            await CreateTranslationLink(sessionId, speaker, user);
-            _logger.LogInformation("Translation restarted: {Listener} switched back to translated voice.",
-                user.DisplayName);
-        }
-    }
-
-    public async Task SetListenLanguage(string sessionId, string listenLanguage)
-    {
-        if (!Sessions.TryGetValue(sessionId, out var session))
-            return;
-        if (!session.TryGetValue(Context.ConnectionId, out var user))
-            return;
-
-        user.ListenLanguage = listenLanguage;
-        await Clients.Caller.SendAsync("ListenLanguageChanged", listenLanguage);
-
-        // Recreate translation link with new language
-        var speaker = session.Values.FirstOrDefault(u => u.ConnectionId != Context.ConnectionId);
-        if (speaker != null && !user.ListenOriginal)
-        {
             await CreateTranslationLink(sessionId, speaker, user);
         }
     }
 
-    /// <summary>
-    /// Receives PCM audio chunks and pushes them into the continuous recognizer.
-    /// Translation sessions are auto-created when both users join.
-    /// </summary>
     public async Task SendAudio(string sessionId, string pcmAudioBase64)
     {
         try
         {
             if (!Sessions.TryGetValue(sessionId, out var session))
                 return;
-
             if (!session.TryGetValue(Context.ConnectionId, out var speaker))
                 return;
 
@@ -227,7 +207,6 @@ public class TranslationHub : Hub
             if (pcmAudio.Length == 0)
                 return;
 
-            // Forward raw audio to listeners who want original voice
             var originalListeners = session.Values
                 .Where(u => u.ConnectionId != Context.ConnectionId && u.ListenOriginal)
                 .ToList();
@@ -238,7 +217,6 @@ public class TranslationHub : Hub
                     .SendAsync("ReceiveOriginalAudio", pcmAudioBase64, speaker.DisplayName);
             }
 
-            // Push audio into the continuous recognizer
             var sessionKey = GetSessionKey(sessionId, Context.ConnectionId);
             if (TranslationSessions.TryGetValue(sessionKey, out var translationSession))
             {
@@ -253,7 +231,6 @@ public class TranslationHub : Hub
 
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
-        // Clean up translation sessions where this user is the speaker
         var speakerKeys = TranslationSessions.Keys
             .Where(k => k.EndsWith("_" + Context.ConnectionId))
             .ToList();
@@ -266,7 +243,6 @@ public class TranslationHub : Hub
             }
         }
 
-        // Clean up translation sessions where this user is the listener
         foreach (var (sessionId, session) in Sessions)
         {
             if (session.ContainsKey(Context.ConnectionId))
@@ -283,7 +259,6 @@ public class TranslationHub : Hub
             }
         }
 
-        // Remove user from session roster
         foreach (var (sessionId, session) in Sessions)
         {
             if (session.TryRemove(Context.ConnectionId, out var user))

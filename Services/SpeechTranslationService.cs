@@ -8,7 +8,7 @@ namespace SpeechTranslationPOC.Services;
 
 /// <summary>
 /// Factory that creates continuous TranslationSession instances.
-/// Each session holds a persistent recognizer and push stream.
+/// Supports both standard neural voice translation and Live Interpreter (Personal Voice).
 /// </summary>
 public class SpeechTranslationService
 {
@@ -27,32 +27,33 @@ public class SpeechTranslationService
     }
 
     /// <summary>
-    /// Creates and starts a continuous translation session.
-    ///
-    /// Currently uses the standard Speech Translation API with neural voices.
-    /// To enable Live Interpreter with Personal Voice and auto-detect, apply
-    /// for access at https://aka.ms/livechatinterpreter, then switch to
-    /// FromEndpoint() with the universal v2 endpoint.
+    /// Creates a standard translation session with explicit source language and neural voice.
     /// </summary>
     public async Task<TranslationSession> CreateSessionAsync(
         string sourceLanguage,
         string targetLanguage,
         bool synthesize)
     {
-        var authToken = await _tokenProvider.GetTokenAsync();
+        _logger.LogInformation(
+            "[Standard] Creating session: source={Source}, target={Target}, synthesize={Synth}",
+            sourceLanguage, targetLanguage, synthesize);
 
-        // Entra ID tokens use format: aad#<resourceId>#<accessToken>
+        var authToken = await _tokenProvider.GetTokenAsync();
+        _logger.LogInformation("[Standard] Token acquired, length={TokenLength}", authToken.Length);
+
         var aadToken = $"aad#{_options.ResourceId}#{authToken}";
 
         var config = SpeechTranslationConfig.FromAuthorizationToken(
             aadToken, _options.Region);
 
         config.SpeechRecognitionLanguage = sourceLanguage;
-        config.AddTargetLanguage(GetLanguageCode(targetLanguage));
+        config.AddTargetLanguage(GetLanguageCode(targetLanguage));  // "es-ES" "es"
 
         if (synthesize)
         {
-            config.VoiceName = GetVoiceName(targetLanguage);
+            var voiceName = GetVoiceName(targetLanguage);
+            config.VoiceName = voiceName;
+            _logger.LogInformation("[Standard] Voice set to: {Voice}", voiceName);
         }
 
         var pushStream = AudioInputStream.CreatePushStream(
@@ -65,18 +66,93 @@ public class SpeechTranslationService
         await session.StartAsync();
 
         _logger.LogInformation(
-            "Created translation session: {Source} -> {Target} (synthesize={Synth})",
-            sourceLanguage, targetLanguage, synthesize);
+            "[Standard] Session started successfully: {Source} -> {Target}",
+            sourceLanguage, targetLanguage);
+
+        return session;
+    }
+
+    /// <summary>
+    /// Creates a Live Interpreter session using the v2 universal endpoint.
+    /// Uses auto-detect for source language and Personal Voice for synthesis.
+    /// </summary>
+    public async Task<TranslationSession> CreatePersonalVoiceSessionAsync(
+        string targetLanguage)
+    {
+        _logger.LogInformation("[PersonalVoice] Creating session: target={Target}, region={Region}",
+            targetLanguage, _options.Region);
+
+        var authToken = await _tokenProvider.GetTokenAsync();
+        _logger.LogInformation("[PersonalVoice] AAD token acquired, length={Len}", authToken.Length);
+
+        // V2 endpoint -- required for Live Interpreter + Language ID (SDK 1.44+)
+        var endpointUrl = $"wss://{_options.Region}.stt.speech.microsoft.com/speech/universal/v2";
+        _logger.LogInformation("[PersonalVoice] Endpoint: {Endpoint}", endpointUrl);
+
+        var endpoint = new Uri(endpointUrl);
+
+        // FromEndpoint(Uri) -- no key, use AAD token
+        var config = SpeechTranslationConfig.FromEndpoint(endpoint);
+
+        // AAD token MUST be in format: aad#{resourceId}#{token}
+        config.AuthorizationToken = $"aad#{_options.ResourceId}#{authToken}";
+        _logger.LogInformation("[PersonalVoice] AuthorizationToken set (resourceId={Id})", _options.ResourceId);
+
+        // Target language (just language code, no region)
+        config.AddTargetLanguage(GetLanguageCode(targetLanguage));  // "es-ES" -> "es"
+        _logger.LogInformation("[PersonalVoice] Target language: {Lang}", GetLanguageCode(targetLanguage));
+
+        // Personal voice name
+        config.VoiceName = "personal-voice";
+        _logger.LogInformation("[PersonalVoice] VoiceName: personal-voice");
+
+        // Enable SDK file logging to capture handshake/auth details
+        var logPath = Path.Combine(
+            Environment.GetEnvironmentVariable("HOME") ?? ".",
+            "LogFiles", "speechsdk.log");
+        Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
+        config.SetProperty(PropertyId.Speech_LogFilename, logPath);
+        _logger.LogInformation("[PersonalVoice] SDK log file: {Path}", logPath);
+
+        // No source language -- open range for multilingual/Live Interpreter
+        var autoDetectConfig = AutoDetectSourceLanguageConfig.FromOpenRange();
+        _logger.LogInformation("[PersonalVoice] AutoDetect OpenRange (no source language set)");
+
+        var pushStream = AudioInputStream.CreatePushStream(
+            AudioStreamFormat.GetWaveFormatPCM(16000, 16, 1));
+        var audioInput = AudioConfig.FromStreamInput(pushStream);
+
+        TranslationRecognizer recognizer;
+        try
+        {
+            recognizer = new TranslationRecognizer(config, autoDetectConfig, audioInput);
+            _logger.LogInformation("[PersonalVoice] Recognizer created OK");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[PersonalVoice] FAILED to create recognizer");
+            throw;
+        }
+
+        var session = new TranslationSession(recognizer, pushStream, _logger);
+
+        try
+        {
+            await session.StartAsync();
+            _logger.LogInformation("[PersonalVoice] Session started successfully");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[PersonalVoice] FAILED to start recognition");
+            await session.DisposeAsync();
+            throw;
+        }
 
         return session;
     }
 
     private static string GetLanguageCode(string locale) => locale.Split('-')[0];
 
-    /// <summary>
-    /// Maps a locale to an Azure neural voice name for speech synthesis.
-    /// Once Live Interpreter access is approved, replace with "PersonalVoiceNeural".
-    /// </summary>
     private static string GetVoiceName(string locale) => locale switch
     {
         "en-US" => "en-US-JennyNeural",

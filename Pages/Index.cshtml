@@ -11,74 +11,62 @@
     <div id="setup-panel" class="card mb-4">
         <div class="card-body">
             <h5 class="card-title">Join a Session</h5>
-            <div class="row g-3">
-                <div class="col-md-3">
+
+            <!-- Step 1: Session ID and Name -->
+            <div class="row g-3 mb-4">
+                <div class="col-md-6">
                     <label for="sessionId" class="form-label">Session ID</label>
                     <input type="text" class="form-control" id="sessionId" value="session-1" />
                 </div>
-                <div class="col-md-3">
+                <div class="col-md-6">
                     <label for="displayName" class="form-label">Your Name</label>
                     <input type="text" class="form-control" id="displayName" placeholder="Enter name" />
                 </div>
-                <div class="col-md-3">
-                    <label for="speakLanguage" class="form-label">I Speak</label>
-                    <select class="form-select" id="speakLanguage">
-                        <option value="en-US">English (US)</option>
-                        <option value="es-ES">Spanish (Spain)</option>
-                        <option value="fr-FR">French (France)</option>
-                        <option value="de-DE">German (Germany)</option>
-                        <option value="zh-CN">Chinese (Mandarin)</option>
-                        <option value="ja-JP">Japanese</option>
-                        <option value="pt-BR">Portuguese (Brazil)</option>
-                        <option value="hi-IN">Hindi (India)</option>
-                        <option value="ar-SA">Arabic (Saudi Arabia)</option>
-                        <option value="ko-KR">Korean</option>
-                        <option value="it-IT">Italian</option>
-                        <option value="ru-RU">Russian</option>
-                    </select>
+            </div>
+
+            <hr />
+
+            <!-- Step 2: Translation Mode -->
+            <h6 class="mb-3">Translation Mode</h6>
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <div class="card h-100" id="standardModeCard">
+                        <div class="card-body">
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="translationMode"
+                                       id="standardModeRadio" value="standard" checked>
+                                <label class="form-check-label" for="standardModeRadio">
+                                    <strong>Standard (Neural Voice)</strong>
+                                    <span class="text-muted small d-block">Select source and target languages. Translation uses a neural voice.</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <div class="col-md-3">
-                    <label for="listenLanguage" class="form-label">I Want to Hear</label>
-                    <select class="form-select" id="listenLanguage">
-                        <option value="en-US">English (US)</option>
-                        <option value="es-ES">Spanish (Spain)</option>
-                        <option value="fr-FR">French (France)</option>
-                        <option value="de-DE">German (Germany)</option>
-                        <option value="zh-CN">Chinese (Mandarin)</option>
-                        <option value="ja-JP">Japanese</option>
-                        <option value="pt-BR">Portuguese (Brazil)</option>
-                        <option value="hi-IN">Hindi (India)</option>
-                        <option value="ar-SA">Arabic (Saudi Arabia)</option>
-                        <option value="ko-KR">Korean</option>
-                        <option value="it-IT">Italian</option>
-                        <option value="ru-RU">Russian</option>
-                    </select>
+                <div class="col-md-6">
+                    <div class="card h-100" id="personalVoiceCard">
+                        <div class="card-body">
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="translationMode"
+                                       id="personalVoiceModeRadio" value="personal">
+                                <label class="form-check-label" for="personalVoiceModeRadio">
+                                    <strong>Live Interpreter (Personal Voice)</strong>
+                                    <span class="text-muted small d-block">Auto-detects what you speak. Translation uses your own voice.</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
-            <button id="joinBtn" class="btn btn-primary mt-3">Join Session</button>
-        </div>
-    </div>
 
-    <!-- Active Session -->
-    <div id="session-panel" class="d-none">
-        <div class="row">
-            <!-- Controls -->
-            <div class="col-md-6">
-                <div class="card mb-3">
-                    <div class="card-body">
-                        <h5 class="card-title">Session: <span id="activeSessionId"></span></h5>
-                        <p class="text-muted">Connected as: <strong id="activeUserName"></strong></p>
-
-                        <div class="form-check form-switch mb-2">
-                            <input class="form-check-input" type="checkbox" id="listenOriginalToggle">
-                            <label class="form-check-label" for="listenOriginalToggle">
-                                Listen to original voice (no translation)
-                            </label>
-                        </div>
-
-                        <div class="mb-2">
-                            <label for="listenLanguageLive" class="form-label">Change Listen Language</label>
-                            <select class="form-select" id="listenLanguageLive">
+            <!-- Language Selection (changes based on mode) -->
+            <div id="languageSection" class="row g-3">
+                <!-- Standard Mode Languages -->
+                <div id="standardLanguages">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label for="speakLanguage" class="form-label">I Speak</label>
+                            <select class="form-select" id="speakLanguage">
                                 <option value="en-US">English (US)</option>
                                 <option value="es-ES">Spanish (Spain)</option>
                                 <option value="fr-FR">French (France)</option>
@@ -93,8 +81,74 @@
                                 <option value="ru-RU">Russian</option>
                             </select>
                         </div>
+                        <div class="col-md-6">
+                            <label for="listenLanguage" class="form-label">I Want to Hear (Neural Voice)</label>
+                            <select class="form-select" id="listenLanguage">
+                                <option value="en-US">English (US)</option>
+                                <option value="es-ES">Spanish (Spain)</option>
+                                <option value="fr-FR">French (France)</option>
+                                <option value="de-DE">German (Germany)</option>
+                                <option value="zh-CN">Chinese (Mandarin)</option>
+                                <option value="ja-JP">Japanese</option>
+                                <option value="pt-BR">Portuguese (Brazil)</option>
+                                <option value="hi-IN">Hindi (India)</option>
+                                <option value="ar-SA">Arabic (Saudi Arabia)</option>
+                                <option value="ko-KR">Korean</option>
+                                <option value="it-IT">Italian</option>
+                                <option value="ru-RU">Russian</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
 
-                        <button id="leaveBtn" class="btn btn-outline-secondary mt-2">Leave Session</button>
+                <!-- Personal Voice Mode Languages -->
+                <div id="personalVoiceLanguages" class="d-none">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">I Speak</label>
+                            <input type="text" class="form-control" value="Auto Detect (any language)" disabled />
+                            <small class="text-muted">Language is detected automatically</small>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="listenLanguagePV" class="form-label">I Want to Hear (Personal Voice)</label>
+                            <select class="form-select" id="listenLanguagePV">
+    <option value="en-US">English (US)</option>
+    <option value="es-ES">Spanish (Spain)</option>
+    <option value="fr-FR">French (France)</option>
+    <option value="de-DE">German (Germany)</option>
+    <option value="ja-JP">Japanese</option>
+    <option value="ko-KR">Korean</option>
+    <option value="it-IT">Italian</option>
+    <option value="pt-BR">Portuguese (Brazil)</option>
+</select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <button id="joinBtn" class="btn btn-primary mt-4 btn-lg">Join Session</button>
+        </div>
+    </div>
+
+    <!-- Active Session -->
+    <div id="session-panel" class="d-none">
+        <div class="row">
+            <!-- Controls -->
+            <div class="col-md-4">
+                <div class="card mb-3">
+                    <div class="card-body">
+                        <h5 class="card-title">Session: <span id="activeSessionId"></span></h5>
+                        <p class="text-muted">Connected as: <strong id="activeUserName"></strong></p>
+                        <p id="modeIndicator" class="small"></p>
+
+                        <div class="form-check form-switch mb-3">
+                            <input class="form-check-input" type="checkbox" id="listenOriginalToggle">
+                            <label class="form-check-label" for="listenOriginalToggle">
+                                Listen to original voice (no translation)
+                            </label>
+                        </div>
+
+                        <button id="leaveBtn" class="btn btn-outline-secondary">Leave Session</button>
                     </div>
                 </div>
 
@@ -109,12 +163,12 @@
             </div>
 
             <!-- Transcript -->
-            <div class="col-md-6">
+            <div class="col-md-8">
                 <div class="card">
                     <div class="card-body">
                         <h5 class="card-title">Conversation Transcript</h5>
                         <div id="transcript" class="border rounded p-3"
-                             style="height: 400px; overflow-y: auto; background: #f8f9fa;">
+                             style="height: 500px; overflow-y: auto; background: #f8f9fa;">
                             <p class="text-muted text-center">Waiting for conversation...</p>
                         </div>
                     </div>

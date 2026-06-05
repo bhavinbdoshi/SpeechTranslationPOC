@@ -14,6 +14,9 @@ public sealed class TranslationSession : IAsyncDisposable
     private readonly PushAudioInputStream _pushStream;
     private readonly ILogger _logger;
     private bool _disposed;
+    private int _audioChunksReceived;
+    private int _recognizedCount;
+    private int _synthesisCount;
 
     /// <summary>Fires when a complete sentence is recognized and translated (text only).</summary>
     public event Func<TranslationTextResult, Task>? OnTranslationTextReceived;
@@ -37,6 +40,18 @@ public sealed class TranslationSession : IAsyncDisposable
         _recognizer.Recognized += HandleRecognized;
         _recognizer.Synthesizing += HandleSynthesizing;
         _recognizer.Canceled += HandleCanceled;
+        _recognizer.SessionStarted += HandleSessionStarted;
+        _recognizer.SessionStopped += HandleSessionStopped;
+    }
+
+    private void HandleSessionStarted(object? sender, SessionEventArgs e)
+    {
+        _logger.LogInformation("[Session] SDK session started. SessionId={SessionId}", e.SessionId);
+    }
+
+    private void HandleSessionStopped(object? sender, SessionEventArgs e)
+    {
+        _logger.LogInformation("[Session] SDK session stopped. SessionId={SessionId}", e.SessionId);
     }
 
     private void HandleRecognizing(object? sender, TranslationRecognitionEventArgs e)
@@ -50,13 +65,16 @@ public sealed class TranslationSession : IAsyncDisposable
                 break;
             }
 
+            _logger.LogDebug("[Session] Partial: \"{Text}\" -> \"{Translation}\"",
+                e.Result.Text, partialTranslation);
+
             try
             {
                 OnPartialResult?.Invoke(e.Result.Text, partialTranslation);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Error in OnPartialResult callback.");
+                _logger.LogWarning(ex, "[Session] Error in OnPartialResult callback.");
             }
         }
     }
@@ -65,12 +83,17 @@ public sealed class TranslationSession : IAsyncDisposable
     {
         if (e.Result.Reason == ResultReason.TranslatedSpeech)
         {
+            _recognizedCount++;
             var translatedText = string.Empty;
             foreach (var kvp in e.Result.Translations)
             {
                 translatedText = kvp.Value;
                 break;
             }
+
+            Console.WriteLine($"[Session] RECOGNIZED #{_recognizedCount}: \"{e.Result.Text}\" -> \"{translatedText}\"");
+            _logger.LogInformation("[Session] Recognized #{Count}: \"{Text}\" -> \"{Translation}\"",
+                _recognizedCount, e.Result.Text, translatedText);
 
             var result = new TranslationTextResult
             {
@@ -84,49 +107,61 @@ public sealed class TranslationSession : IAsyncDisposable
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Error in OnTranslationTextReceived callback.");
+                _logger.LogWarning(ex, "[Session] Error in OnTranslationTextReceived callback.");
             }
         }
         else if (e.Result.Reason == ResultReason.NoMatch)
         {
-            _logger.LogDebug("Continuous recognition: no match in audio segment.");
+            Console.WriteLine("[Session] NoMatch - no speech recognized");
+            _logger.LogInformation("[Session] NoMatch");
+        }
+        else
+        {
+            Console.WriteLine($"[Session] Recognized with unexpected reason: {e.Result.Reason}");
         }
     }
 
     private void HandleSynthesizing(object? sender, TranslationSynthesisEventArgs e)
     {
         var audio = e.Result.GetAudio();
+
+        Console.WriteLine($"[Session] SYNTHESIZING: {audio.Length} bytes, Reason={e.Result.Reason}");
+        _logger.LogInformation("[Session] Synthesizing: {Bytes} bytes, Reason={Reason}",
+            audio.Length, e.Result.Reason);
+
         if (audio.Length > 0)
         {
+            _synthesisCount++;
+            Console.WriteLine($"[Session] Synthesis #{_synthesisCount}: sending {audio.Length} bytes");
+
             try
             {
                 OnSynthesisAudioReceived?.Invoke(audio);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Error in OnSynthesisAudioReceived callback.");
+                Console.WriteLine($"[Session] ERROR in OnSynthesisAudioReceived: {ex.Message}");
+                _logger.LogWarning(ex, "[Session] Error in OnSynthesisAudioReceived callback.");
             }
+        }
+        else
+        {
+            Console.WriteLine("[Session] WARNING: Synthesizing fired with 0 bytes");
         }
     }
 
     private void HandleCanceled(object? sender, TranslationRecognitionCanceledEventArgs e)
     {
-        if (e.Reason == CancellationReason.Error)
-        {
-            _logger.LogError(
-                "Continuous recognition canceled: ErrorCode={ErrorCode}, Details={Details}",
-                e.ErrorCode, e.ErrorDetails);
-        }
-        else
-        {
-            _logger.LogInformation("Continuous recognition ended: {Reason}", e.Reason);
-        }
+        Console.WriteLine($"[Session] CANCELED: Reason={e.Reason}, ErrorCode={e.ErrorCode}, Details={e.ErrorDetails}");
+        _logger.LogError("[Session] CANCELED: Reason={Reason}, ErrorCode={Code}, Details={Details}",
+            e.Reason, e.ErrorCode, e.ErrorDetails);
     }
 
     public async Task StartAsync()
     {
+        _logger.LogInformation("[Session] Starting continuous recognition...");
         await _recognizer.StartContinuousRecognitionAsync();
-        _logger.LogInformation("Continuous recognition started.");
+        _logger.LogInformation("[Session] Continuous recognition started successfully.");
     }
 
     /// <summary>Pushes raw PCM audio (16kHz, 16-bit, mono) into the recognizer.</summary>
@@ -134,16 +169,28 @@ public sealed class TranslationSession : IAsyncDisposable
     {
         if (!_disposed)
         {
+            _audioChunksReceived++;
             _pushStream.Write(pcmAudio);
+
+            // Log every 50 chunks (~10 seconds of audio) to avoid flooding
+            if (_audioChunksReceived % 50 == 0)
+            {
+                _logger.LogInformation(
+                    "[Session] Audio progress: {Chunks} chunks received ({TotalBytes} bytes total)",
+                    _audioChunksReceived, (long)_audioChunksReceived * pcmAudio.Length);
+            }
         }
     }
 
     public async Task StopAsync()
     {
         if (_disposed) return;
+        _logger.LogInformation(
+            "[Session] Stopping. Stats: {Chunks} audio chunks, {Recognized} recognitions, {Synthesis} synthesis events",
+            _audioChunksReceived, _recognizedCount, _synthesisCount);
         _pushStream.Close();
         await _recognizer.StopContinuousRecognitionAsync();
-        _logger.LogInformation("Continuous recognition stopped.");
+        _logger.LogInformation("[Session] Stopped successfully.");
     }
 
     public async ValueTask DisposeAsync()
@@ -151,10 +198,14 @@ public sealed class TranslationSession : IAsyncDisposable
         if (_disposed) return;
         _disposed = true;
 
+        _logger.LogInformation("[Session] Disposing...");
+
         _recognizer.Recognizing -= HandleRecognizing;
         _recognizer.Recognized -= HandleRecognized;
         _recognizer.Synthesizing -= HandleSynthesizing;
         _recognizer.Canceled -= HandleCanceled;
+        _recognizer.SessionStarted -= HandleSessionStarted;
+        _recognizer.SessionStopped -= HandleSessionStopped;
 
         try
         {
@@ -163,11 +214,12 @@ public sealed class TranslationSession : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Error during TranslationSession dispose.");
+            _logger.LogWarning(ex, "[Session] Error during dispose.");
         }
 
         _recognizer.Dispose();
         _pushStream.Dispose();
+        _logger.LogInformation("[Session] Disposed.");
     }
 }
 

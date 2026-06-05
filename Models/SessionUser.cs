@@ -7,4 +7,5 @@ public class SessionUser
     public string SpeakLanguage { get; set; } = "en-US";
     public string ListenLanguage { get; set; } = "en-US";
     public bool ListenOriginal { get; set; } = false;
+    public bool UsePersonalVoice { get; set; } = false;
 }

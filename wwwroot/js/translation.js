@@ -10,9 +10,8 @@ var audioContext = null;
 var mediaStream = null;
 var workletNode = null;
 var isRecording = false;
-
-// Audio playback -- single context, plays immediately
 var playbackContext = null;
+var isPersonalVoiceMode = false;
 
 // -- DOM Elements ---------------------------------------------------------
 var setupPanel = document.getElementById("setup-panel");
@@ -20,10 +19,38 @@ var sessionPanel = document.getElementById("session-panel");
 var joinBtn = document.getElementById("joinBtn");
 var leaveBtn = document.getElementById("leaveBtn");
 var listenOriginalToggle = document.getElementById("listenOriginalToggle");
-var listenLanguageLive = document.getElementById("listenLanguageLive");
 var statusArea = document.getElementById("statusArea");
 var partnerInfo = document.getElementById("partnerInfo");
 var transcript = document.getElementById("transcript");
+var modeIndicator = document.getElementById("modeIndicator");
+var standardModeRadio = document.getElementById("standardModeRadio");
+var personalVoiceModeRadio = document.getElementById("personalVoiceModeRadio");
+var standardLanguages = document.getElementById("standardLanguages");
+var personalVoiceLanguages = document.getElementById("personalVoiceLanguages");
+var standardModeCard = document.getElementById("standardModeCard");
+var personalVoiceCard = document.getElementById("personalVoiceCard");
+
+// -- Mode Toggle ----------------------------------------------------------
+
+standardModeRadio.addEventListener("change", function () {
+    if (standardModeRadio.checked) {
+        standardLanguages.classList.remove("d-none");
+        personalVoiceLanguages.classList.add("d-none");
+        standardModeCard.classList.add("border-primary");
+        personalVoiceCard.classList.remove("border-primary");
+    }
+});
+
+personalVoiceModeRadio.addEventListener("change", function () {
+    if (personalVoiceModeRadio.checked) {
+        standardLanguages.classList.add("d-none");
+        personalVoiceLanguages.classList.remove("d-none");
+        personalVoiceCard.classList.add("border-primary");
+        standardModeCard.classList.remove("border-primary");
+    }
+});
+
+standardModeCard.classList.add("border-primary");
 
 // -- Base64 Helpers -------------------------------------------------------
 
@@ -52,6 +79,13 @@ connection.on("JoinedSession", function (sessionId, displayName) {
     document.getElementById("activeUserName").textContent = displayName;
     setupPanel.classList.add("d-none");
     sessionPanel.classList.remove("d-none");
+
+    if (isPersonalVoiceMode) {
+        modeIndicator.innerHTML = '<span class="badge bg-info">Live Interpreter - Personal Voice (Auto Detect)</span>';
+    } else {
+        modeIndicator.innerHTML = '<span class="badge bg-secondary">Standard - Neural Voice Translation</span>';
+    }
+
     setStatus("Connected. Waiting for partner...");
 });
 
@@ -68,17 +102,14 @@ connection.on("UserLeft", function (displayName) {
     stopMicrophone();
 });
 
-// Partial text -- shows while speaker is still talking
 connection.on("ReceivePartial", function (speakerName, recognizedText, partialTranslation) {
     updatePartialTranscript(speakerName, recognizedText, partialTranslation);
 });
 
-// Final text -- arrives when sentence is complete
 connection.on("ReceiveText", function (speakerName, recognizedText, translatedText) {
     finalizeTranscriptEntry(speakerName, recognizedText, translatedText);
 });
 
-// Translated audio -- arrives independently, play IMMEDIATELY
 connection.on("ReceiveAudio", function (audioBase64, speakerName) {
     if (audioBase64 && audioBase64.length > 0) {
         var audioBytes = base64ToUint8Array(audioBase64);
@@ -86,7 +117,6 @@ connection.on("ReceiveAudio", function (audioBase64, speakerName) {
     }
 });
 
-// Original voice audio (raw PCM) -- for "listen original" mode
 connection.on("ReceiveOriginalAudio", function (pcmBase64, speakerName) {
     if (pcmBase64 && pcmBase64.length > 0) {
         var audioBytes = base64ToUint8Array(pcmBase64);
@@ -112,20 +142,30 @@ connection.on("Error", function (message) {
 joinBtn.addEventListener("click", async function () {
     var sessionId = document.getElementById("sessionId").value.trim();
     var displayName = document.getElementById("displayName").value.trim();
-    var speakLang = document.getElementById("speakLanguage").value;
-    var listenLang = document.getElementById("listenLanguage").value;
 
     if (!sessionId || !displayName) {
         alert("Please enter a session ID and your name.");
         return;
     }
 
-    listenLanguageLive.value = listenLang;
+    isPersonalVoiceMode = personalVoiceModeRadio.checked;
 
-    // Create playback context during user gesture (will not be suspended)
+    var speakLang;
+    var listenLang;
+    var usePersonalVoice;
+
+    if (isPersonalVoiceMode) {
+        speakLang = "auto";
+        listenLang = document.getElementById("listenLanguagePV").value;
+        usePersonalVoice = true;
+    } else {
+        speakLang = document.getElementById("speakLanguage").value;
+        listenLang = document.getElementById("listenLanguage").value;
+        usePersonalVoice = false;
+    }
+
     playbackContext = new (window.AudioContext || window.webkitAudioContext)();
 
-    // Open mic while we have user gesture context
     await startMicrophone();
 
     if (!isRecording) {
@@ -139,7 +179,7 @@ joinBtn.addEventListener("click", async function () {
 
     try {
         await connection.start();
-        await connection.invoke("JoinSession", sessionId, displayName, speakLang, listenLang);
+        await connection.invoke("JoinSession", sessionId, displayName, speakLang, listenLang, usePersonalVoice);
     } catch (err) {
         console.error("Failed to join:", err);
         setStatus("Connection failed. Check console.");
@@ -161,17 +201,11 @@ leaveBtn.addEventListener("click", async function () {
     partnerInfo.innerHTML = "";
 });
 
-// -- Listen Settings ------------------------------------------------------
+// -- Listen Original Toggle -----------------------------------------------
 
 listenOriginalToggle.addEventListener("change", function () {
     if (currentSessionId) {
         connection.invoke("SetListenMode", currentSessionId, listenOriginalToggle.checked);
-    }
-});
-
-listenLanguageLive.addEventListener("change", function () {
-    if (currentSessionId) {
-        connection.invoke("SetListenLanguage", currentSessionId, listenLanguageLive.value);
     }
 });
 
@@ -236,7 +270,7 @@ function stopMicrophone() {
     setStatus("Microphone stopped.");
 }
 
-// -- Audio Playback (immediate, no queue) ---------------------------------
+// -- Audio Playback -------------------------------------------------------
 
 function playAudioNow(audioBytes) {
     if (!playbackContext || playbackContext.state === "closed") return;
@@ -253,7 +287,6 @@ function playAudioNow(audioBytes) {
         audioBytes.byteOffset + audioBytes.byteLength
     );
 
-    // Try to decode as WAV/MP3 first
     try {
         playbackContext.decodeAudioData(arrayBuffer, function (decoded) {
             var source = playbackContext.createBufferSource();
@@ -261,7 +294,6 @@ function playAudioNow(audioBytes) {
             source.connect(playbackContext.destination);
             source.start();
         }, function (err) {
-            // Fallback: treat as raw 16-bit PCM
             console.warn("decodeAudioData failed, playing as PCM:", err);
             playPcmNow(audioBytes);
         });
@@ -289,6 +321,23 @@ function playPcmNow(audioBytes) {
     source.buffer = buffer;
     source.connect(playbackContext.destination);
     source.start();
+}
+
+// -- Helpers --------------------------------------------------------------
+
+function populateSelect(selectEl, options) {
+    var currentValue = selectEl.value;
+    selectEl.innerHTML = "";
+    options.forEach(function (opt) {
+        var el = document.createElement("option");
+        el.value = opt.value;
+        el.textContent = opt.text;
+        selectEl.appendChild(el);
+    });
+    var values = options.map(function (o) { return o.value; });
+    if (values.indexOf(currentValue) >= 0) {
+        selectEl.value = currentValue;
+    }
 }
 
 // -- Transcript Helpers ---------------------------------------------------
