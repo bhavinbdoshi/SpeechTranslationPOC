@@ -116,7 +116,7 @@ Provide candidate languages, or use an open range for no specified source langua
 
 - C#: samples/csharp/dotnetcore/console/translation_samples.cs
 - C++: samples/cpp/windows/console/samples/translation_samples.cpp
-Python: samples/python/console/translation_sample.py
+- Python: samples/python/console/translation_sample.py
 
 ## Prerequisites
 
